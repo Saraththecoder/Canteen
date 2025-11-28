@@ -1,0 +1,127 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Canteen Quick Order</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <style>
+    body { font-family: system-ui, Roboto, Arial; padding: 12px; max-width: 720px; margin: auto; color:#111 }
+    h1 { font-size: 1.3rem; margin-bottom:6px; }
+    .menu { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:6px; }
+    .item { border:1px solid #e0e0e0; padding:10px; border-radius:8px; width:48%; box-sizing:border-box; background:#fff }
+    .muted { color:#666; font-size:0.9rem; }
+    button { padding:8px 10px; border-radius:6px; cursor:pointer; border:none; background:#1976d2; color:white }
+    .smallbtn { padding:6px 8px; background:#555; color:white; border-radius:6px; border:none; cursor:pointer; }
+    .cart { margin-top:12px; border-top:1px solid #eee; padding-top:12px; }
+  </style>
+</head>
+<body>
+  <h1>Canteen Quick Order</h1>
+  <p class="muted">Tap items to add to cart. Pay via UPI, paste TXID, submit. Uncle will verify and accept.</p>
+
+  <div id="menu" class="menu"></div>
+  <div class="cart">
+    <h3>Your Cart</h3>
+    <div id="cartList" class="muted">(empty)</div>
+    <label>Pickup</label>
+    <div style="display:flex; gap:8px; margin-bottom:6px;">
+      <select id="pickupMode">
+        <option value="now">Now</option>
+        <option value="schedule">Schedule</option>
+      </select>
+      <input id="pickupTime" type="datetime-local" style="display:none" />
+    </div>
+    <label>Customer (Name - Phone)</label>
+    <input id="cust" placeholder="Name - Phone" />
+    <h4>Total: ₹ <span id="total">0.00</span></h4>
+    <div style="display:flex; gap:8px; margin-bottom:8px;">
+      <button id="payBtn">Pay & Place Order</button>
+      <button id="clearBtn" class="smallbtn">Clear Cart</button>
+    </div>
+
+    <div id="paymentArea" style="display:none">
+      <div style="border:1px dashed #bbb; padding:10px; margin-top:8px; text-align:center;">
+        <div id="qrcode"></div>
+        <p id="upilinktext"></p>
+        <p class="muted">Tap link to open UPI app.</p>
+      </div>
+
+      <label>Paste UPI Transaction ID (UTR)</label>
+      <input id="txid" placeholder="e.g. 20231129ABCDE1234" />
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button id="confirmBtn">Confirm & Submit Order</button>
+        <button id="cancelPay" class="smallbtn">Cancel</button>
+      </div>
+    </div>
+
+    <div id="status" style="color:green; margin-top:10px"></div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script>
+    // CONFIGURE:
+    const MERCHANT_UPI = "8074244332@axl";   // <-- set canteen UPI id
+    const MERCHANT_NAME = "Campus Canteen"; // <-- display name
+    const WEBAPP_URL = "https://script.google.com/macros/s/AKfycbzv4Yae-SGcMM6OMeSF1-0EiswlDevvUFRkPw0AaDWbGtb5E3BoyXolR6nNO0rc_Dq3/exec"; // <-- set your Apps Script URL
+
+    // MENU: edit items/prices to real ones
+    const menu = [
+      { id: 'tea', name: 'Tea', price: 10 },
+      { id: 'samosa', name: 'Samosa', price: 15 },
+      { id: 'sandwich', name: 'Sandwich', price: 40 }
+    ];
+
+    // DOM refs
+    const menuDiv = document.getElementById('menu'), cartList = document.getElementById('cartList'),
+          totalSpan = document.getElementById('total'), pickupMode = document.getElementById('pickupMode'),
+          pickupTime = document.getElementById('pickupTime'), payBtn = document.getElementById('payBtn'),
+          clearBtn = document.getElementById('clearBtn'), paymentArea = document.getElementById('paymentArea'),
+          qrcodeDiv = document.getElementById('qrcode'), upilinktext = document.getElementById('upilinktext'),
+          txidInput = document.getElementById('txid'), confirmBtn = document.getElementById('confirmBtn'),
+          cancelPay = document.getElementById('cancelPay'), custInput = document.getElementById('cust'),
+          statusDiv = document.getElementById('status');
+
+    let cart = {}, _pendingOrder = null, _pollInterval = null;
+
+    function renderMenu(){ menuDiv.innerHTML=''; menu.forEach(it=>{ const el=document.createElement('div'); el.className='item'; el.innerHTML=`<strong>${it.name}</strong><div class="muted">₹ ${it.price}</div><div style="margin-top:8px"><button data-id="${it.id}">Add</button></div>`; menuDiv.appendChild(el); el.querySelector('button').onclick=()=>addToCart(it.id); }); }
+    function addToCart(id){ cart[id] = (cart[id]||0)+1; renderCart(); }
+    function renderCart(){ const keys=Object.keys(cart); if(keys.length===0){ cartList.innerHTML='(empty)'; totalSpan.innerText='0.00'; return; } cartList.innerHTML=''; let total=0; keys.forEach(id=>{ const it=menu.find(m=>m.id===id); const qty=cart[id]; const row=document.createElement('div'); row.style.marginBottom='8px'; row.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center"><div><strong>${it.name}</strong> x ${qty} <div class="muted">₹ ${it.price} each</div></div><div><button class="dec" data-id="${id}">-</button><button class="inc" data-id="${id}">+</button><button class="rem" data-id="${id}">remove</button></div></div>`; cartList.appendChild(row); total += it.price * qty; }); totalSpan.innerText = total.toFixed(2); document.querySelectorAll('.inc').forEach(b=>b.onclick=()=>{cart[b.dataset.id]++; renderCart();}); document.querySelectorAll('.dec').forEach(b=>b.onclick=()=>{cart[b.dataset.id]=Math.max(0,cart[b.dataset.id]-1); if(cart[b.dataset.id]===0) delete cart[b.dataset.id]; renderCart();}); document.querySelectorAll('.rem').forEach(b=>b.onclick=()=>{ delete cart[b.dataset.id]; renderCart(); }); }
+    clearBtn.onclick = ()=>{ if(confirm('Clear cart?')){ cart={}; renderCart(); } };
+    pickupMode.onchange = ()=>{ pickupTime.style.display = pickupMode.value==='schedule' ? 'block' : 'none'; };
+
+    payBtn.onclick = ()=>{
+      if(Object.keys(cart).length===0){ alert('Cart empty'); return; }
+      const total = computeTotal(); const orderId='ORD'+Date.now().toString().slice(-8); const tn='Canteen Order '+orderId;
+      const upi = `upi://pay?pa=${encodeURIComponent(MERCHANT_UPI)}&pn=${encodeURIComponent(MERCHANT_NAME)}&am=${encodeURIComponent(total.toFixed(2))}&cu=INR&tn=${encodeURIComponent(tn)}`;
+      qrcodeDiv.innerHTML=''; new QRCode(qrcodeDiv,{text:upi,width:180,height:180}); upilinktext.innerHTML=`<a href="${upi}">Open UPI app to pay ₹ ${total.toFixed(2)}</a>`;
+      paymentArea.style.display='block'; txidInput.value=''; statusDiv.innerText='';
+      _pendingOrder = { id:orderId, cart:JSON.parse(JSON.stringify(cart)), total:total, pickupMode:pickupMode.value, pickupTime: pickupMode.value==='schedule'?pickupTime.value:null, customer:custInput.value||'', upiURI:upi };
+      setTimeout(()=>paymentArea.scrollIntoView({behavior:'smooth'}),200);
+    };
+
+    cancelPay.onclick = ()=>{ if(confirm('Cancel payment?')){ paymentArea.style.display='none'; _pendingOrder=null; txidInput.value=''; } };
+
+    confirmBtn.onclick = ()=>{
+      const tx = txidInput.value.trim();
+      if(!tx){ alert('Paste transaction id (UTR) from UPI app'); return; }
+      if(!_pendingOrder){ alert('No pending order'); return; }
+      _pendingOrder.txid = tx; _pendingOrder.timestamp = (new Date()).toISOString();
+      console.log('SUBMIT ORDER', _pendingOrder);
+      if(WEBAPP_URL.includes('YOUR_DEPLOY_ID')){ alert('WEBAPP_URL placeholder. Replace with Apps Script URL. Order not sent.'); statusDiv.innerText = 'Local test: order prepared (not sent).'; cart={}; renderCart(); paymentArea.style.display='none'; custInput.value=''; txidInput.value=''; return; }
+      fetch(WEBAPP_URL,{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(_pendingOrder) })
+        .then(r=>r.json()).then(res=>{ if(res && res.status==='ok'){ statusDiv.innerText = 'Order submitted. ID: ' + res.orderId + '. Awaiting acceptance.'; cart={}; renderCart(); paymentArea.style.display='none'; custInput.value=''; txidInput.value=''; startPollingOrderStatus(res.orderId); } else { alert('Submit failed: ' + (res && res.message?res.message:'unknown')); } })
+        .catch(err=>{ alert('Network error: ' + err.message); });
+    };
+
+    function computeTotal(){ return Object.keys(cart).reduce((s,id)=>{ const it=menu.find(m=>m.id===id); return s + (it?it.price*cart[id]:0); },0); }
+
+    function startPollingOrderStatus(orderId){
+      if(_pollInterval) clearInterval(_pollInterval);
+      const url = WEBAPP_URL + '?orderId=' + encodeURIComponent(orderId); let attempts=0;
+      _pollInterval = setInterval(()=>{ attempts++; fetch(url).then(r=>r.json()).then(data=>{ if(data && data.status && data.status!=='PENDING'){ statusDiv.innerText = 'Order ' + orderId + ' status: ' + data.status; clearInterval(_pollInterval); _pollInterval = null; } else { if(attempts % 6 === 0) statusDiv.innerText = 'Awaiting uncle confirmation...'; } if(attempts > (60*2)){ clearInterval(_pollInterval); _pollInterval = null; } }).catch(e=>{ /* ignore network glitches */ }); }, 5000);
+    }
+
+    renderMenu(); renderCart();
+  </script>
+</body>
+</html>
